@@ -1,0 +1,154 @@
+= nlboot
+
+next-level booting
+
+== overview
+
+nlboot is a modern HTTP-based iPXE alternative that works with wifi cards, ARM
+systems like Raspberry Pis, PCs, servers, and Cloud VMs.
+
+For each system you just need a small bootable drive: an SD card, SATA module,
+USB key, or virtual disk. Use the 'nlboot' CLI tool to create the drive.
+A trusted url and/or HTTP server (CA) certificate can be supplied as well. In
+addition, an arbitrary string claim code or HTTP client cert can be provided to
+authenticate the device with server. Wifi redentials and or static IPs can also
+be specified.
+
+Once each system is configured to boot from this small drive, it will always
+start by launching a minimal Linux OS, nlos, as a ramdisk (i.e. in memory).
+This OS only includes a minimal libc (musl, 400k), the eiwd daemon for managing
+wireless authentication, boringssl for TLS, and the nlboot daemon itself
+(nlbootd).
+
+After linux loads nlboot (as init), nlbootd will attempt to start eiwd if
+necessary and then nlbootd will announce itself to the trusted URL.
+
+The device can then be claimed using HTTP-based APIs and be directed to
+download a new Linux OS (kernel, initramfs, kernel arguments) using a URL
+specified in a configuration file on the drive.
+
+The resulting system is 100% server managed via the URL. The server controls
+what the system does after booting. The server can be provided with some
+details about the host including connected drives and displays. The client
+authenticates the server and the server can authenticate the client.
+
+== how it works
+
+- boot into basic systemd system based on yocto/poky
+- access wireless or wired network maybe using password in config file
+- take inventory of disks and displays to send to remote URL
+- d/l a different kernel/initramfs/kargs from some HTTPS URLs
+- keexec into the URL-specified kernel/intramfs/kargs
+
+what happens after the keexec is entirely dictated by what is inside the
+initramfs that is downloaded and the kernel args. for instance, it could start
+a kubernetes node or anything else you can dream of.
+
+== device announcement and provisioning API
+
+Devices make announcements to provisioning server.
+
+....
+POST wlserver HTTP/1.1
+Host: example.com
+Connection: close
+Content-type: application/json
+Content-length: 448
+
+{
+    "ids" : { ... },
+    "info" : { ... },
+    "nics" : { ... },
+    "disks" : { ... },
+    "displays" : { ... },
+}
+....
+
+Server responds immediately with either:
+
+....
+{
+    "_type" : "nlboot.BootInstructions"
+    "kernel" : {
+        "url" : "...",
+        "checksum" : "sha1sum:...",
+        "args" : "..."
+    }
+    "initramfs" : {
+        "url" : "...",
+        "checksum" : "sha1sum:...",
+    }
+}
+....
+
+Or:
+
+....
+{
+    "_type" : "nlboot.TryAgainResponse"
+    "timeout_seconds" : "..."
+    "live_notify_ws_url" : "..."
+}
+....
+
+== device support
+
+nlboot has been designed to work on:
+
+- desktop PCs and laptops
+- physical servers
+- Raspberry zero-w/3/4
+- i.mx6 based devices (sabresd, cubox, hummingboard)
+
+== boot partition layout
+
+nlboot uses a hybrid GPT/MBR disk layout to support multiple devices as easily
+as possible.
+
+In all cases boot files are managed from a single VFAT partition so that they
+can be managed from any OS
+
+==== Desktop PCs and Servers x86_64 (UEFI Boot)
+
+- First partition acts as standard EFI system partition
+- Kernel boots using with CONFIG_EFI_STUB=y (see https://wiki.archlinux.org/index.php/EFISTUB)
+
+=== ARM
+
+==== i.MX6
+
+- SPL/-u-boot are on space before first partition
+- Kernel/initramfs go on the first partition
+
+==== Raspberry Pi
+
+- Kernel/initramfs go on first partition (along with rpi bootloader config.txt)
+
+==== AWS EC2 ARM Graviton (UEFI)
+
+TODO
+
+==== AWS EC2 x86_64 (Legacy Boot)
+
+TODO
+
+== offline mode
+
+if nlboot cannot reach the nlboot server URL it can fallback to the
+last downloaded and verified configuration JSON (along with kernel and initramfs).
+
+at this point it becomes the responsibility of the booting OS to bring itself
+up without network access (perhaps by searching for a persisted OS installation
+on another drive or partition).
+
+== motivation
+
+the author has a computer problem
+
+- too many raspberry PIs
+- various ARM i.MX6 devices
+- intel NUC mini PCs
+- rack mount servers
+- router PCs
+
+
